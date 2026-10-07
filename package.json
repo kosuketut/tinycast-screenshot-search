@@ -1,0 +1,154 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "screenshot-search",
+  "title": "Screenshot Search",
+  "description": "Search screenshots by the text inside them, then preview, paste, or copy them",
+  "version": "1.1.0",
+  "author": "kosuke_yano",
+  "license": "GPL-3.0-or-later",
+  "categories": [
+    "Media"
+  ],
+  "icon": "icon.png",
+  "commands": [
+    {
+      "name": "search-screenshots",
+      "title": "Search Screenshots",
+      "description": "Find screenshots by the text inside them, their name, folder, or date",
+      "mode": "view"
+    },
+    {
+      "name": "paste-latest-screenshot",
+      "title": "Paste Latest Screenshot",
+      "description": "Paste the most recent screenshot into the active app",
+      "mode": "no-view"
+    },
+    {
+      "name": "index-screenshots",
+      "title": "Index Screenshots",
+      "description": "Read the text of new screenshots in the background so they are searchable right away",
+      "mode": "no-view",
+      "interval": "10m"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "scopeFolders",
+      "type": "textfield",
+      "required": false,
+      "title": "Search Scopes",
+      "description": "Extra folders to scan, one per line. The system screenshot folder, the CleanShot X folder, and Desktop are always included.",
+      "default": "~/Desktop"
+    },
+    {
+      "name": "includeAllMedia",
+      "type": "checkbox",
+      "required": false,
+      "title": "Include All Media",
+      "description": "Index all supported images and videos in watched folders.",
+      "label": "Index all supported images and videos in watched folders",
+      "default": false
+    },
+    {
+      "name": "textRecognition",
+      "type": "checkbox",
+      "required": false,
+      "title": "Text Recognition",
+      "description": "Read the text in screenshots with Vision on this Mac, newest first.",
+      "label": "Read the text in screenshots on this Mac",
+      "default": true
+    },
+    {
+      "name": "allowCloudFiles",
+      "type": "checkbox",
+      "required": false,
+      "title": "Allow Text Recognition for Cloud Files",
+      "description": "Let macOS download cloud-only files to read their text.",
+      "label": "Let macOS download cloud-only files to read their text",
+      "default": false
+    },
+    {
+      "name": "storageDuration",
+      "type": "dropdown",
+      "required": false,
+      "title": "Read Screenshots From",
+      "description": "Only read the text of screenshots this recent. Original files are never deleted.",
+      "default": "unlimited",
+      "data": [
+        {
+          "title": "Last Day",
+          "value": "1d"
+        },
+        {
+          "title": "Last Week",
+          "value": "1w"
+        },
+        {
+          "title": "Last Month",
+          "value": "1m"
+        },
+        {
+          "title": "Last 3 Months",
+          "value": "3m"
+        },
+        {
+          "title": "Last 6 Months",
+          "value": "6m"
+        },
+        {
+          "title": "Last Year",
+          "value": "1y"
+        },
+        {
+          "title": "All Time",
+          "value": "unlimited"
+        }
+      ]
+    },
+    {
+      "name": "columnCount",
+      "type": "dropdown",
+      "required": false,
+      "title": "Column Count",
+      "description": "Default number of columns in the screenshot grid.",
+      "default": "4",
+      "data": [
+        {
+          "title": "3",
+          "value": "3"
+        },
+        {
+          "title": "4",
+          "value": "4"
+        },
+        {
+          "title": "5",
+          "value": "5"
+        },
+        {
+          "title": "6",
+          "value": "6"
+        }
+      ]
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.4.1"
+  },
+  "scripts": {
+    "build": "ray build",
+    "build:tinycast": "ray build -e dist -o ./dist --exit-on-error",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "publish": "ray publish"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.0.4",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  }
+}
