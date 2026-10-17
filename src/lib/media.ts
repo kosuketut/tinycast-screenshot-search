@@ -31,13 +31,26 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 const VIDEO_EXTENSIONS = new Set([".m4v", ".mov", ".mp4", ".webm"]);
+const MEDIA_EXTENSIONS = [...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS];
 // ponytail: bounded fallback walk; indexed macOS scopes avoid this ceiling.
 const MAX_SCAN_DEPTH = 8;
 const MAX_SCAN_ENTRIES_PER_SCOPE = 10_000;
-const SPOTLIGHT_MEDIA_QUERY = `(${[...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS]
-  .map((extension) => `kMDItemFSName == "*${extension}"cd`)
-  .join(" || ")})`;
+const SPOTLIGHT_MEDIA_QUERY = `(${MEDIA_EXTENSIONS.map(
+  (extension) => `kMDItemFSName == "*${extension}"cd`,
+).join(" || ")})`;
 const SPOTLIGHT_SCAN_TIMEOUT = 10_000;
+// A folder is listed by one find, and Spotlight's paths by one stat per
+// batch. Tinycast answers each fs call over a synchronous bridge, so statting
+// 3,000 screenshots one at a time took half a second there.
+// Birth time, modified time, size, path. Nanoseconds, so the milliseconds
+// come out exactly as fs.stat gives them and the OCR index still matches.
+const STAT_FORMAT = "%.9FB\t%.9Fm\t%z\t%N";
+const STAT_BATCH_SIZE = 500;
+const FIND_MEDIA_NAMES = MEDIA_EXTENSIONS.flatMap((extension, index) => [
+  ...(index > 0 ? ["-o"] : []),
+  "-iname",
+  `*${extension}`,
+]);
 
 export type ScreenshotPreferences = ExtensionPreferences;
 
@@ -69,9 +82,7 @@ export async function loadMediaItems(
         looksLikeCaptureFolder(scope) ||
         path.basename(scope).toLocaleLowerCase() === "desktop"
       ) {
-        await scanDirectory(scope, includeAllMedia, items, seen, false, 0, {
-          remainingEntries: MAX_SCAN_ENTRIES_PER_SCOPE,
-        });
+        await walkDirectory(scope, includeAllMedia, items, seen);
         return;
       }
 
@@ -81,11 +92,7 @@ export async function loadMediaItems(
         items,
         seen,
       );
-      if (!indexed) {
-        await scanDirectory(scope, includeAllMedia, items, seen, false, 0, {
-          remainingEntries: MAX_SCAN_ENTRIES_PER_SCOPE,
-        });
-      }
+      if (!indexed) await walkDirectory(scope, includeAllMedia, items, seen);
     }),
   );
 
@@ -243,18 +250,153 @@ async function scanIndexedDirectory(
     .filter(Boolean);
   if (paths.length === 0) return false;
 
-  await Promise.all(
-    paths.map((filePath) =>
-      addMediaItem(
-        filePath,
-        includeAllMedia,
-        isCapturePath(filePath, directory),
-        items,
-        seen,
-      ),
-    ),
+  const wanted = paths.filter((filePath) =>
+    isWanted(filePath, directory, includeAllMedia),
   );
+  for (let start = 0; start < wanted.length; start += STAT_BATCH_SIZE) {
+    const listing = await runListing("/usr/bin/stat", [
+      "-f",
+      STAT_FORMAT,
+      "--",
+      ...wanted.slice(start, start + STAT_BATCH_SIZE),
+    ]);
+    if (listing) addStatLines(listing, directory, includeAllMedia, items, seen);
+  }
   return true;
+}
+
+async function walkDirectory(
+  directory: string,
+  includeAllMedia: boolean,
+  items: MediaItem[],
+  seen: Set<string>,
+): Promise<void> {
+  if (await findMedia(directory, includeAllMedia, items, seen)) return;
+  await scanDirectory(directory, includeAllMedia, items, seen, false, 0, {
+    remainingEntries: MAX_SCAN_ENTRIES_PER_SCOPE,
+  });
+}
+
+/**
+ * Walks `directory` the way `scanDirectory` does, skipping hidden entries and
+ * stopping at the same depth, but in one find. Natively that walks 80,000
+ * entries in about a third of a second, so it needs no entry budget.
+ */
+async function findMedia(
+  directory: string,
+  includeAllMedia: boolean,
+  items: MediaItem[],
+  seen: Set<string>,
+): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+
+  const listing = await runListing("/usr/bin/find", [
+    directory,
+    "-mindepth",
+    "1",
+    "-maxdepth",
+    String(MAX_SCAN_DEPTH + 1),
+    "-name",
+    ".*",
+    "-prune",
+    "-o",
+    "-type",
+    "f",
+    "(",
+    ...FIND_MEDIA_NAMES,
+    ")",
+    "-exec",
+    "/usr/bin/stat",
+    "-f",
+    STAT_FORMAT,
+    "{}",
+    "+",
+  ]);
+  if (listing === undefined) return false;
+  addStatLines(listing, directory, includeAllMedia, items, seen);
+  return true;
+}
+
+/**
+ * What a listing printed, including what it printed before a timeout or an
+ * unreadable subfolder made it fail. Undefined when it printed nothing and
+ * failed, so the caller can fall back to walking the folder itself.
+ */
+async function runListing(
+  file: string,
+  args: string[],
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync(file, args, {
+      encoding: "utf8",
+      timeout: SPOTLIGHT_SCAN_TIMEOUT,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return stdout;
+  } catch (error) {
+    const stdout = (error as { stdout?: string }).stdout;
+    return stdout || undefined;
+  }
+}
+
+/** Adds the media files in `stat -f STAT_FORMAT` output. */
+function addStatLines(
+  listing: string,
+  scope: string,
+  includeAllMedia: boolean,
+  items: MediaItem[],
+  seen: Set<string>,
+): void {
+  for (const line of listing.split("\n")) {
+    // A line break in a file name splits its line; neither half parses.
+    const [birth, modified, size, ...rest] = line.split("\t");
+    const filePath = rest.join("\t");
+    const kind = mediaKind(filePath);
+    if (!kind || !isWanted(filePath, scope, includeAllMedia)) continue;
+
+    const modifiedAt = statMilliseconds(modified);
+    const bytes = Number(size);
+    if (!Number.isFinite(modifiedAt) || !Number.isFinite(bytes)) continue;
+    const resolved = path.resolve(filePath);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    items.push({
+      id: resolved,
+      path: resolved,
+      name: path.basename(resolved),
+      kind,
+      capturedAt: statMilliseconds(birth) || modifiedAt,
+      modifiedAt,
+      size: bytes,
+    });
+  }
+}
+
+/** `1760000060.123456789` as fs.stat's `mtimeMs` would give it. */
+function statMilliseconds(value: string | undefined): number {
+  const [seconds, nanoseconds = "0"] = (value ?? "").split(".");
+  return Number(seconds) * 1e3 + Number(nanoseconds.padEnd(9, "0")) / 1e6;
+}
+
+function mediaKind(filePath: string): MediaItem["kind"] | undefined {
+  const extension = path.extname(filePath).toLocaleLowerCase();
+  return IMAGE_EXTENSIONS.has(extension)
+    ? "image"
+    : VIDEO_EXTENSIONS.has(extension)
+      ? "video"
+      : undefined;
+}
+
+function isWanted(
+  filePath: string,
+  scope: string,
+  includeAllMedia: boolean,
+): boolean {
+  return (
+    includeAllMedia ||
+    looksLikeCapture(path.basename(filePath)) ||
+    isCapturePath(filePath, scope)
+  );
 }
 
 async function scanDirectory(
@@ -315,12 +457,7 @@ async function addMediaItem(
   seen: Set<string>,
 ): Promise<void> {
   const name = path.basename(filePath);
-  const extension = path.extname(name).toLocaleLowerCase();
-  const kind = IMAGE_EXTENSIONS.has(extension)
-    ? "image"
-    : VIDEO_EXTENSIONS.has(extension)
-      ? "video"
-      : undefined;
+  const kind = mediaKind(filePath);
   if (!kind || (!includeAllMedia && !captureScope && !looksLikeCapture(name)))
     return;
 

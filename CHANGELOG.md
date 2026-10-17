@@ -1,5 +1,10 @@
 # Screenshot Search Changelog
 
+## Unreleased
+
+- Show grid tiles from 512-pixel thumbnails, made for the page shown and the next one. A page of 48 took seconds to fill in in Tinycast.
+- List screenshot folders with one `find` instead of a call per file: 3,000 screenshots load in 90 ms instead of 450 ms in Tinycast, which speeds up opening the search and **Paste Latest Screenshot**.
+
 ## 1.1.0 - 2026-10-07
 
 - Read screenshot text with Vision (Japanese and English) in the background, newest first, and search it with every query.
