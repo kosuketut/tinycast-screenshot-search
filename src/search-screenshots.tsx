@@ -52,6 +52,12 @@ const PROGRESS_INTERVAL = 5_000;
 // Opens and closes the preview. Space is left for typing
 // multi-word searches.
 const PREVIEW_SHORTCUT: Keyboard.Shortcut = { modifiers: ["ctrl"], key: "y" };
+// Raycast gives the second action ⌘↵ by itself; Tinycast gives extensions no
+// second action, so the paste action, second in each panel, declares it.
+const PASTE_SHORTCUT: Keyboard.Shortcut = {
+  modifiers: ["cmd"],
+  key: "return",
+};
 // Tinycast runs Raycast extensions but has no Grid pagination, so it gets a
 // Show More tile instead. Drawing every screenshot at once cost about 90 MB.
 const IS_TINYCAST = Boolean(
@@ -424,6 +430,14 @@ function PreviewView({ item }: { item: MediaItem }) {
             content={{ file: item.path }}
           />
           <Action
+            title={
+              item.kind === "image" ? "Paste Screenshot" : "Paste Recording"
+            }
+            icon={Icon.Clipboard}
+            shortcut={PASTE_SHORTCUT}
+            onAction={() => pasteFile(item.path, item.name)}
+          />
+          <Action
             title="Back to Screenshots"
             icon={Icon.ArrowLeft}
             shortcut={PREVIEW_SHORTCUT}
@@ -477,17 +491,18 @@ function ItemActions({
         content={{ file: item.path }}
       />
       <Action
+        title={item.kind === "image" ? "Paste Screenshot" : "Paste Recording"}
+        icon={Icon.Clipboard}
+        shortcut={PASTE_SHORTCUT}
+        onAction={() => pasteFile(item.path, item.name)}
+      />
+      <Action
         title={
           item.kind === "image" ? "Preview Screenshot" : "Preview Recording"
         }
         icon={Icon.Eye}
         shortcut={PREVIEW_SHORTCUT}
         onAction={onPreview}
-      />
-      <Action
-        title={item.kind === "image" ? "Paste Screenshot" : "Paste Recording"}
-        icon={Icon.Clipboard}
-        onAction={() => pasteFile(item.path, item.name)}
       />
       {item.lines?.length ? (
         <Action.CopyToClipboard
