@@ -12,7 +12,7 @@ import {
   Toast,
   useNavigation,
 } from "@raycast/api";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   addCustomScope,
   chooseFolder,
@@ -34,6 +34,13 @@ import {
 } from "./lib/ocr";
 import type { IndexProgress, OcrIndex } from "./lib/ocr";
 import { parseSearchQuery, prepareItems, searchItems } from "./lib/query";
+import {
+  makeThumbnails,
+  pruneThumbnails,
+  readThumbnails,
+  thumbnailKey,
+} from "./lib/thumbnails";
+import type { Thumbnails } from "./lib/thumbnails";
 
 const COLUMN_KEY = "column-count";
 const DEFAULT_COLUMNS = 4;
@@ -67,6 +74,9 @@ export default function SearchScreenshots() {
   const [ocrIndex, setOcrIndex] = useState<OcrIndex>({});
   const [progress, setProgress] = useState<IndexProgress>();
   const [pinned, setPinned] = useState<Set<string>>(new Set());
+  const [thumbnails, setThumbnails] = useState<Thumbnails>(new Map());
+  // Keys asked for in this session, made or not, so none is asked for twice.
+  const requestedThumbnails = useRef(new Set<string>());
   const [columns, setColumns] = useState(
     clampColumns(Number(preferences.columnCount)),
   );
@@ -104,17 +114,21 @@ export default function SearchScreenshots() {
     async function load() {
       setIsLoading(true);
       setProgress(undefined);
-      const [nextItems, nextPinned, nextIndex] = await Promise.all([
-        loadMediaItems(preferences),
-        readPinnedPaths(),
-        readOcrIndex(),
-      ]);
+      const [nextItems, nextPinned, nextIndex, nextThumbnails] =
+        await Promise.all([
+          loadMediaItems(preferences),
+          readPinnedPaths(),
+          readOcrIndex(),
+          readThumbnails(),
+        ]);
       if (cancelled) return;
 
       setScannedItems(nextItems);
       setPinned(nextPinned);
       setOcrIndex(nextIndex);
+      setThumbnails(nextThumbnails);
       setIsLoading(false);
+      void pruneThumbnails(nextItems, nextThumbnails).catch(() => undefined);
 
       const stale = staleRecords(nextIndex, preferences, nextPinned);
       await saveOcrRecords({}, stale);
@@ -157,6 +171,35 @@ export default function SearchScreenshots() {
       controller.abort();
     };
   }, [preferences, refreshKey]);
+
+  // Thumbnails for the tiles shown, then for the next page, so Show More
+  // fills in at once. A tile shows its original until its thumbnail is made.
+  useEffect(() => {
+    if (isLoading) return;
+    const pages = [
+      hits.slice(0, visibleCount),
+      hits.slice(visibleCount, visibleCount + PAGE_SIZE),
+    ].map((page) =>
+      page
+        .map((hit) => hit.item)
+        .filter((item) => {
+          if (item.kind !== "image") return false;
+          const key = thumbnailKey(item);
+          if (thumbnails.has(key) || requestedThumbnails.current.has(key))
+            return false;
+          requestedThumbnails.current.add(key);
+          return true;
+        }),
+    );
+
+    void (async () => {
+      for (const page of pages) {
+        const made = await makeThumbnails(page);
+        if (made.size > 0)
+          setThumbnails((current) => new Map([...current, ...made]));
+      }
+    })().catch(() => undefined);
+  }, [hits, visibleCount, thumbnails, isLoading]);
 
   const changeColumns = (delta: number) => {
     setColumns((current) => {
@@ -262,7 +305,11 @@ export default function SearchScreenshots() {
                 key={item.id}
                 id={item.id}
                 content={
-                  item.kind === "image" ? { source: item.path } : Icon.Video
+                  item.kind === "image"
+                    ? {
+                        source: thumbnails.get(thumbnailKey(item)) ?? item.path,
+                      }
+                    : Icon.Video
                 }
                 title={item.name}
                 subtitle={

@@ -60,7 +60,7 @@ After the exact matches come **Near Matches**: screenshots where OCR read look-a
 
 Configure **Search Scopes** in the extension preferences. The system screenshot folder, the CleanShot X folder, and Desktop are always included.
 
-Without the Xcode Command Line Tools, the extension falls back to Spotlight's text, which is empty for most screenshots. Cloud-only files are skipped unless **Allow Text Recognition for Cloud Files** is on, since reading them makes macOS download them. The recognized text is stored in the extension's support folder. Original files are never modified, except by **Move to Trash**.
+Without the Xcode Command Line Tools, the extension falls back to Spotlight's text, which is empty for most screenshots. Cloud-only files are skipped unless **Allow Text Recognition for Cloud Files** is on, since reading them makes macOS download them. The recognized text is stored in the extension's support folder, along with 512-pixel thumbnails of the screenshots shown in the grid (about 30 KB each, 90 KB with transparency). Cloud-only files get no thumbnail. Original files are never modified, except by **Move to Trash**.
 
 Tinycast has no Grid pagination, so results are shown 48 at a time with a **Show More** tile at the end.
 

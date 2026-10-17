@@ -19,29 +19,98 @@ const SAVE_INTERVAL = 10_000;
 
 // Vision reads small interface text and Japanese far better than the text
 // Spotlight stores, which is empty for most screenshots. Compiled once into
-// the support folder; `swift -e` would recompile on every file.
+// the support folder; `swift -e` would recompile on every file. With
+// `--thumbnails` it makes the grid's thumbnails instead.
 const HELPER_SOURCE = `
 import Foundation
+import ImageIO
 import Vision
 
+func emit(_ object: [String: Any]) {
+  if let data = try? JSONSerialization.data(withJSONObject: object),
+    let json = String(data: data, encoding: .utf8)
+  {
+    print(json)
+    fflush(stdout)
+  }
+}
+
+// A cloud placeholder (SF_DATALESS) would be downloaded by reading it.
+// Checked here because Tinycast's fs.stat reports no block count.
+func isCloudOnly(_ path: String) -> Bool {
+  var info = stat()
+  return stat(path, &info) == 0 && info.st_flags & 0x40000000 != 0
+}
+
+// Whether any pixel lets the background through, like the shadow around a
+// window capture, which JPEG would turn black.
+func hasTransparency(_ image: CGImage) -> Bool {
+  if [.none, .noneSkipFirst, .noneSkipLast].contains(image.alphaInfo) { return false }
+  let width = image.width
+  let height = image.height
+  var pixels = [UInt8](repeating: 0, count: width * height * 4)
+  let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+    guard
+      let context = CGContext(
+        data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+        bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return false }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return true
+  }
+  return !drawn || stride(from: 3, to: pixels.count, by: 4).contains { pixels[$0] < 255 }
+}
+
+// Pairs of screenshot and where its thumbnail goes, less the extension.
+func writeThumbnails(_ pairs: [String]) {
+  for index in stride(from: 0, to: pairs.count - 1, by: 2) {
+    let path = pairs[index]
+    var written: String?
+    if !isCloudOnly(path) {
+      autoreleasepool {
+        let options: [CFString: Any] = [
+          kCGImageSourceCreateThumbnailFromImageAlways: true,
+          kCGImageSourceCreateThumbnailWithTransform: true,
+          kCGImageSourceThumbnailMaxPixelSize: 512,
+        ]
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        else { return }
+        let png = hasTransparency(image)
+        let target = pairs[index + 1] + (png ? ".png" : ".jpg")
+        // Written aside and moved in, so the grid never shows half a file.
+        let temporary = target + ".tmp"
+        guard
+          let destination = CGImageDestinationCreateWithURL(
+            URL(fileURLWithPath: temporary) as CFURL,
+            (png ? "public.png" : "public.jpeg") as CFString, 1, nil)
+        else { return }
+        CGImageDestinationAddImage(
+          destination, image,
+          [kCGImageDestinationLossyCompressionQuality: 0.8] as CFDictionary)
+        if CGImageDestinationFinalize(destination) && rename(temporary, target) == 0 {
+          written = target
+        }
+      }
+    }
+    emit(["path": path, "thumbnail": written ?? NSNull()])
+  }
+}
+
 var paths = Array(CommandLine.arguments.dropFirst())
+if paths.first == "--thumbnails" {
+  writeThumbnails(Array(paths.dropFirst()))
+  exit(0)
+}
 let allowCloud = paths.first == "--allow-cloud"
 if allowCloud { paths.removeFirst() }
 
 for path in paths {
   var lines = [String]()
   var ok = false
-  // A cloud placeholder (SF_DATALESS) would be downloaded by reading it.
-  // Checked here because Tinycast's fs.stat reports no block count.
-  var info = stat()
-  if !allowCloud && stat(path, &info) == 0 && info.st_flags & 0x40000000 != 0 {
-    let skipped: [String: Any] = ["path": path, "ok": false, "skipped": true, "lines": []]
-    if let data = try? JSONSerialization.data(withJSONObject: skipped),
-      let json = String(data: data, encoding: .utf8)
-    {
-      print(json)
-      fflush(stdout)
-    }
+  if !allowCloud && isCloudOnly(path) {
+    emit(["path": path, "ok": false, "skipped": true, "lines": []])
     continue
   }
   autoreleasepool {
@@ -64,13 +133,7 @@ for path in paths {
         .filter { $0.count > 1 }
     } catch {}
   }
-  let object: [String: Any] = ["path": path, "ok": ok, "lines": lines]
-  if let data = try? JSONSerialization.data(withJSONObject: object),
-    let json = String(data: data, encoding: .utf8)
-  {
-    print(json)
-    fflush(stdout)
-  }
+  emit(["path": path, "ok": ok, "lines": lines])
 }
 `;
 
@@ -372,7 +435,7 @@ async function recognize(
 
 let helperPromise: Promise<string | undefined> | undefined;
 
-function ensureHelper(): Promise<string | undefined> {
+export function ensureHelper(): Promise<string | undefined> {
   helperPromise ??= buildHelper();
   return helperPromise;
 }
@@ -401,7 +464,7 @@ async function buildHelper(): Promise<string | undefined> {
   }
 }
 
-async function run(
+export async function run(
   command: string,
   args: string[],
   timeout: number,
