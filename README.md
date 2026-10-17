@@ -51,6 +51,7 @@ After the exact matches come **Near Matches**: screenshots where OCR read look-a
 | Shortcut | Action |
 |---|---|
 | Enter | Copy the screenshot |
+| Cmd+Enter | Paste the screenshot into the previously active app |
 | Ctrl+Y | Preview, and Ctrl+Y again to go back |
 | Cmd+Shift+C | Copy the recognized text |
 | Cmd+Shift+P | Pin. Pinned screenshots keep their text regardless of the storage setting. |

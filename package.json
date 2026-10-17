@@ -3,7 +3,7 @@
   "name": "screenshot-search",
   "title": "Screenshot Search",
   "description": "Search screenshots by the text inside them, then preview, paste, or copy them",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "kosuke_yano",
   "license": "GPL-3.0-or-later",
   "categories": [
